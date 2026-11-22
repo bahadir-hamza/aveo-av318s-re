@@ -1,0 +1,15 @@
+# Vendor driver files - do not commit (copyright)
+*.cab
+*.sys
+*.ax
+*.cat
+*.inf
+
+# Local dumps and logs
+eeprom.bin
+*.log
+olaylar.csv
+cosmic/olaylar/olay_*.png
+
+__pycache__/
+.DS_Store

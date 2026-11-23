@@ -21,6 +21,8 @@ MIN_PIKSEL = 2       # en az kaç piksel eşiği aşmalı (tekil gürültüyü e
 KAYIT = "olaylar"
 
 os.makedirs(KAYIT, exist_ok=True)
+# Güç döngüsü / yeniden takma sonrası ayar sıfırlanır: brightness her açılışta 85
+os.system(f"v4l2-ctl -d /dev/video{CIHAZ} -c brightness=85")
 cap = cv2.VideoCapture(CIHAZ, cv2.CAP_V4L2)
 # Sıkıştırmasız format (YUYV) iste: MJPEG küçük izleri bozabilir
 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
@@ -43,6 +45,14 @@ ref = np.median(kareler, axis=0)
 sigma = kareler.std(axis=0)
 # Sürekli parlayan (sıcak) pikselleri maskele
 sicak = (ref > ref.mean() + 5 * ref.std()) | (sigma > 3 * np.median(sigma) + 5)
+# Bilinen titreyen pikseller (x, y) - çevresiyle birlikte maskelenir
+BILINEN = [(639, 322), (0, 465)]
+def maskele(x, y, r=2):
+    sicak[max(0, y-r):y+r+1, max(0, x-r):x+r+1] = True
+for bx, by in BILINEN:
+    if by < sicak.shape[0] and bx < sicak.shape[1]:
+        maskele(bx, by)
+tekrar = {}          # (x//4, y//4) -> sayaç ; aynı yerde 3 olay = otomatik maske
 print(f"Referans hazır. Ort. seviye={ref.mean():.1f}, maskelenen sıcak piksel={int(sicak.sum())}")
 
 log = open("olaylar.csv", "a", newline="")
@@ -57,10 +67,17 @@ try:
         parlak = fark > ESIK
         n = int(parlak.sum())
         if n >= MIN_PIKSEL:
+            ys, xs = np.nonzero(parlak)
+            cx, cy = int(xs.mean()), int(ys.mean())
+            k = (cx // 4, cy // 4)
+            tekrar[k] = tekrar.get(k, 0) + 1
+            if tekrar[k] >= 3:
+                maskele(cx, cy)
+                print(f"  -> ({cx},{cy}) tekrar ediyor, sıcak piksel olarak maskelendi")
+                continue
             sayac += 1
             zaman = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
             enparlak = float(fark.max())
-            ys, xs = np.nonzero(parlak)
             # Kareyi kontrastı artırarak kaydet
             gorsel = np.clip(fark * 4, 0, 255).astype(np.uint8)
             cv2.imwrite(f"{KAYIT}/olay_{zaman}.png", gorsel)

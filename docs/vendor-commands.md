@@ -61,3 +61,53 @@ Recipient is *endpoint* (`bmRequestType` **`0xC2`** for IN, **`0x42`** for OUT);
 | 0x0e, 0x0f, 0x11, 0x14, 0x15 | auto contrast, effects, **BPC**, digital zoom/pan, special effects | **software only** (driver context) |
 | 0x18, 0x41, 0xf0 | unknown | vendor `0xd1`, `0xb0`, `0x8c` |
 | 0xf1 | block write + commit | vendor `0x02`/`0x03` ⛔ |
+
+## Tested on the device (23 Nov 2026)
+
+The driver supports several Aveo chip generations; this AV318S answers only a subset.
+
+### Chip identification (driver function `0x2b220`)
+
+1. Vendor `0x02` **IN**, wValue 0, wIndex 0 → the chip always returns 42 bytes:
+   `AVEO Technology Corp. All Rights Reserved.` The driver compares it with its own copy
+   (genuine-chip check). ✅ our chip
+2. If that fails: vendor `0x08` **IN**, 12 bytes, compared with `"Ver R"` — older generation.
+   Never sent to our chip by the driver → **not tested** (0x08 OUT is the flash commit command).
+
+### Results
+
+| bRequest | Dir | Result on this chip |
+|---|---|---|
+| `0x00` | OUT | ✅ **register write works**: wValue = value, wIndex = `0x100 \| addr`; read-back via `0x01` confirms |
+| `0x01` | IN | ✅ register read |
+| `0x02` | IN | ✅ identification string (42 bytes, independent of wLength) |
+| `0x60` / `0x61` | OUT / IN | ❌ STALL for every wIndex high byte 0x00–0xFF (sensor access of another generation?) |
+| `0x8c` | OUT | ❌ STALL (level 1–34; probably focus motor of the "financial camera" model) |
+| CT / PU unadvertised controls | | ❌ STALL (see usb-descriptors.md) |
+
+### IN-direction scan of all bRequest codes (wValue 0, wIndex 0, wLength 64)
+
+`0x03`, `0x07`, `0x08` were skipped on purpose.
+
+| bRequest | Answer |
+|---|---|
+| `0x01` | 1 byte (`f4`) |
+| `0x02` | 42 bytes (identification string) |
+| `0x04` | 1 byte (`99`) — unknown |
+| `0x09` | **more than 64 bytes** (overflow) — unknown, possibly a memory block → see `tools/bellek_dok.py` |
+| `0x0a` | 2 bytes (`00 00`) — unknown |
+| `0x10`, `0x11` | accepted, 0 bytes … |
+| `0x12`–`0x1b` | timeouts, then the device **dropped off the bus** |
+
+> ⛔ **`0x10` / `0x11` make the chip disconnect and hang.** It did not re-enumerate, and on a
+> Raspberry Pi 5 `uhubctl` could not recover it (the Pi 5 does not really cut VBUS, it only
+> disables the port). A physical unplug is needed. Never send them.
+
+### Windows property page (`CamIntfc.ax`)
+
+The user-mode part only offers: horizontal / vertical flip, anti-flicker 50/60 Hz, special colour
+(B&W, sepia, sea blue, grass green), face tracking, and software effects (negative, glass,
+monitor, distorting mirror, emboss, neon, fish-eye, canvas, mosaic, magnifier, aim, newspaper,
+photo frames, digital zoom). **No exposure, gain or focus control** — the exposure code in the
+driver belongs to other camera models. Talks to the driver via `KsSynchronousDeviceControl`;
+9 UI languages.

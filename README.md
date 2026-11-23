@@ -46,13 +46,17 @@ The module was salvaged with its original cable (USB + a 3.5 mm jack carrying an
 4. **Vendor request `0x01` (IN)** reads a byte from the controller's internal register space.
    AE statistics blocks and "live" registers were identified —
    see [docs/register-map.md](docs/register-map.md).
-5. Bad-pixel correction, digital zoom and effects are done **in the Windows driver (software)**,
+5. Vendor `0x00` writes the controller's registers (volatile) — but the readable space seems to
+   be a settings copy, not the live ISP. The Windows property page offers **no** exposure / gain
+   control at all for this camera; the chip identifies itself with a fixed copyright string.
+6. Bad-pixel correction, digital zoom and effects are done **in the Windows driver (software)**,
    not on the chip — so on Linux single bright pixels are *not* removed. Good news for particle
    detection.
 
-> ⚠️ **Never send vendor requests `0x02`, `0x03`, `0x07`, `0x08`.** They write to the
-> controller's persistent memory (flash/EEPROM) and can brick the device. All tools in this
-> repository are **read-only** with respect to the chip.
+> ⚠️ **Never send vendor requests `0x02` OUT, `0x03`, `0x07`, `0x08`** (persistent memory
+> writes) **or `0x10` / `0x11`** (the chip drops off the bus and hangs until physically
+> unplugged). All tools here are read-only, except `tools/reg_yaz_test.py`, which writes
+> volatile registers only (vendor `0x00`, range `0x100–0x1FF`).
 
 ## Cosmic ray detector
 

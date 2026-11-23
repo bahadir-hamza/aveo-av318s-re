@@ -61,12 +61,23 @@ pixel cluster that appears in a single frame is a candidate particle hit (muons,
 electrons). [cosmic/kozmik.py](cosmic/kozmik.py) builds a dark reference frame, masks hot pixels
 and logs every event (PNG + CSV).
 
-First night, first ~36 minutes: **3 events (~5/hour)**, consistent with the expected sea-level
-muon flux for a sensor of this size. Both track-like and dot-like events were observed:
+### First night (22 → 23 Nov 2026, ~10.5 h, sea level, indoors)
 
-| Event 1 – short track | Event 2 – dot |
+| | |
 |---|---|
-| ![](cosmic/olaylar/olay1_cizgi_16x.png) | ![](cosmic/olaylar/olay2_nokta_16x.png) |
+| Logged events | 70 |
+| Rejected – settings changed during a register test | 43 |
+| Rejected – one flickering hot pixel at (639, 322) | 3 |
+| **Candidate particle events** | **24 → ~2.3 per hour** |
+| Spatial distribution | uniform (left/right 13/11, top/bottom 13/11) |
+| Very bright (peak > 200) | 5 |
+
+![First night – all candidate events, 8× zoom](cosmic/kozmik_galeri_ilk_gece.png)
+
+Most events are compact dots (near-perpendicular hits), but **tracks appear in several
+directions** — horizontal (22:14), diagonal (04:46, 06:34) and vertical (08:03). That rules out a
+row-readout artifact. 06:00 shows two separate clusters in the same frame.
+Sharp-edged 4×2 blocks are the camera ISP's fingerprint (YUYV chroma sharing + sharpening).
 
 Tips: use YUYV (never MJPEG — compression destroys small hits), raise `brightness`
 (e.g. 85) so the black level is not clipped to 0, run inside `tmux`.

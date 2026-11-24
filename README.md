@@ -89,6 +89,12 @@ v2 (24 Nov 2026):
   [cosmic/aveo_sensor.py](cosmic/aveo_sensor.py). Needs root for pyusb. Auto mode is restored on
   exit.
 
+**Raw mode** (`--ham`, default in manual mode): Y is read straight from the YUYV buffer and
+the OV7725 DSP stages that alter pixels (auto denoise, white/black pixel correction, gamma,
+interpolation, colour matrix, lens correction) are switched off. Neighbouring pixels then have
+independent noise, so single-pixel hits are no longer erased or smeared. Details:
+[docs/firmware.md](docs/firmware.md).
+
 Note: in auto mode the OV7725 night mode (`COM5 = 0xD9`) halves the frame rate in the dark
 (15.9 fps). Manual mode runs at 30 fps.
 

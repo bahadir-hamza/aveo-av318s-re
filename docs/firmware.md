@@ -154,6 +154,52 @@ covered (dark), 640×480 YUYV, 10 frames after 20 warm-up frames:
 Usage: `sudo python3 tools/sensor_yaz.py "13=fa 00=ff 08=01 10=f0" "13=ff"` (each argument =
 one test with up to 16 hex pairs).
 
+## Raw pixel data (24 Nov 2026)
+
+Tools: `tools/ham_kare.py` (apply pairs, save raw YUYV bytes with `CAP_PROP_CONVERT_RGB=0`),
+`tools/gurultu_kor.py` (noise correlation between neighbours), `tools/dsp_test.py`.
+Sensor covered, gain 0xFF, AGC/AEC off.
+
+**1. Read Y directly.** OpenCV's YUYV→BGR→gray conversion moves black (Y≈22) to ≈7 and
+clips the negative noise at 0. The raw YUYV buffer `(480, 640, 2)`, `[..., 0]` = Y, keeps the
+offset.
+
+**2. The OV7725 DSP was smoothing and erasing single pixels.** OV7725 init values: `0x64` DSP_Ctrl1 =
+`0xFF` (all stages on), `0x46` = `0x05` (lens correction), `0x0E` = `0xD9` (night mode).
+Noise correlation between neighbouring pixels (0 = independent pixels):
+
+| Setting | σ | horiz. k=1/2/3 | vert. r=1/2/3 |
+|---|---|---|---|
+| default | 1.17 | 0.77 / 0.58 / 0.38 | 0.72 / 0.48 / 0.25 |
+| denoise + sharpness off (`ac=9f 8e=00 8f=00`) | 1.72 | 0.61 / 0.20 / 0.15 | 0.55 / 0.07 / 0.02 |
+| **+ `64=e0 46=04`** (only SDE on) | 1.92 | **0.01 / 0.01 / 0.00** | **0.00 / 0.01 / 0.00** |
+
+- The ~4-pixel smoothing kernel was the sensor's **auto denoise** (`0xAC` bit 6).
+- The remaining 2-tap correlation was the Bayer interpolation (`0x64` bit 3).
+- With `64=fe` (white-pixel correction off) transient single pixels went from 39 → 357 /min
+  and stable bright pixels from 0 → ~300. **WPC replaces every isolated bright pixel**, which
+  is exactly what a single-pixel hit looks like.
+- `0x64` bit 5 (SDE) must stay on: it adds the black offset. With `64=c0`, Y≈1 and the noise
+  is clipped again.
+- With interpolation off the Y value of each pixel is the single Bayer pixel (2×2 phase means
+  differ slightly). The data is **raw 8-bit per pixel**.
+
+**3. COM7 RAW Bayer (`12=02`) also streams** (24 fps, no errors). Every byte of the YUYV
+buffer is then a pixel value. With all DSP off, odd bytes are 0 and even bytes carry data with
+a −0.23 horizontal correlation, so the bridge still does something to this path. The YUV path
+with DSP off (above) is cleaner.
+
+**4. The sensor re-runs the init table at every stream start** (COM7, denoise … reset). After
+that the firmware re-applies the PU values (gamma slot 8 → our pairs). So settings never stick,
+and opening the stream with the original slot fully restores the sensor.
+
+10-bit data is not possible: the OV7725 ADC is 10-bit, but the DVP bus to the bridge is 8-bit.
+
+`kozmik.py --mod manuel` now uses this "raw" mode by default (`--ham`, pairs in
+`cosmic/aveo_sensor.py: HAM_CIFTLER`). First 2 min: black Y≈22, σ≈2.0, 2587 masked pixels
+(1920 = edge columns, ~670 hot pixels formerly hidden by WPC), 1.5 events/min (all 2 px,
+peak 26–33, close to the threshold).
+
 ## Next steps
 
 - Light test (user at home): verify exposure `0x08/0x10`, find the max useful exposure

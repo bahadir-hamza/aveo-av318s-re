@@ -30,6 +30,19 @@ COM8, GAIN, AECH, AEC = 0x13, 0x00, 0x08, 0x10
 COM8_OTO = 0xFF      # AGC + AEC + AWB otomatik (init tablosunun son değeri)
 COM8_MANUEL = 0xFA   # AGC kapalı, AEC kapalı, AWB açık
 
+# "Ham" mod (24 Kas 2026 ölçümleri, docs/firmware.md): OV7725 DSP'sinin görüntüyü değiştiren
+# aşamalarını kapatır. Sonuç: Y kanalında piksel başına bağımsız 8-bit veri (komşu gürültü
+# korelasyonu 0.77 -> 0.00), siyah ofseti korunur (Y~23, kırpılma yok).
+#   0xAC DSPAuto = 0x9F : otomatik denoise (bit6) ve otomatik keskinlik (bit5) kapalı
+#   0x8E = 0x00         : denoise eşiği 0
+#   0x8F = 0x00         : keskinleştirme 0
+#   0x64 DSP_Ctrl1 = 0xE0 : SDE açık (ofset), renk matrisi / interpolasyon / gamma /
+#                           siyah ve beyaz piksel düzeltmesi kapalı
+#   0x46 = 0x04         : lens düzeltmesi kapalı
+# Sensör her akış başında init tablosunu yeniden yükler; bu çiftler PU yeniden uygulamasıyla
+# (gamma slot 8) her seferinde tekrar yazılır. Kalıcı iz kalmaz.
+HAM_CIFTLER = [(0xAC, 0x9F), (0x8E, 0x00), (0x8F, 0x00), (0x64, 0xE0), (0x46, 0x04)]
+
 
 class SensorHatasi(Exception):
     pass
@@ -103,10 +116,11 @@ def slot8_geri_al():
         return False
 
 
-def manuel_ayarla(cihaz_yolu, kazanc, pozlama=None):
+def manuel_ayarla(cihaz_yolu, kazanc, pozlama=None, ham=False):
     """AGC/AEC kapalı, sabit kazanç (0-255) ve isteğe bağlı sabit pozlama (satır, 0-0xFFFF).
+    ham=True: DSP işleme aşamalarını da kapatır (HAM_CIFTLER).
     Akış başlamadan ÖNCE çağrılmalı: firmware akış başında gamma'yı (=bizim çiftleri) uygular."""
-    ciftler = [(COM8, COM8_MANUEL), (GAIN, kazanc & 0xFF)]
+    ciftler = (HAM_CIFTLER if ham else []) + [(COM8, COM8_MANUEL), (GAIN, kazanc & 0xFF)]
     if pozlama is not None:
         ciftler += [(AECH, (pozlama >> 8) & 0xFF), (AEC, pozlama & 0xFF)]
     slot8_yaz(ciftler)

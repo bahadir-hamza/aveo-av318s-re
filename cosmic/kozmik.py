@@ -4,7 +4,8 @@ Kozmik ışın / radyasyon dedektörü - Aveo AV318S USB kamera (OV7725, sensör
 
 Kurulum:  sudo apt install -y python3-opencv python3-numpy python3-usb
 Çalıştır: python3 kozmik.py                       # sensör otomatik (AGC/AEC açık)
-          sudo python3 kozmik.py --mod manuel     # AGC/AEC kapalı, sabit kazanç (pyusb root ister)
+          sudo python3 kozmik.py --mod manuel     # AGC/AEC kapalı, sabit kazanç, DSP kapalı (ham)
+                                                  # (pyusb root ister; --no-ham = DSP açık)
           python3 kozmik.py --help
 Durdur:   Ctrl+C (ya da SIGTERM)
 
@@ -21,7 +22,7 @@ Mantık:
 Çıktılar (çalışma dizininde):
   olaylar_v2.csv        her olay bir satır (başlıklı)
   olaylar/olay_*.png    olay çevresi kırpma, kontrastlı ve 4x büyütülmüş
-  olaylar/olay_*.npz    ham kırpma (uint8) + işaretli fark (float32) + sigma + meta
+  olaylar/olay_*.npz    ham kırpma (Y, uint8) + işaretli fark (float32) + sigma + meta
   durum.json            canlı durum (her dakika)
   maske.npy             kalıcı sıcak piksel maskesi
 """
@@ -46,6 +47,9 @@ def argumanlar():
     p.add_argument("--kazanc", type=lambda s: int(s, 0), default=0xFF, help="manuel kazanç 0-255")
     p.add_argument("--pozlama", type=lambda s: int(s, 0), default=None,
                    help="manuel pozlama (satır, ör. 0x1f0). Verilmezse dokunulmaz")
+    p.add_argument("--ham", action=argparse.BooleanOptionalAction, default=True,
+                   help="manuel modda OV7725 DSP işlemesini (denoise, piksel düzeltme, gamma, "
+                        "interpolasyon...) kapat -> piksel başına bağımsız ham veri")
     p.add_argument("--brightness", type=int, default=85)
     p.add_argument("--isinma", type=int, default=30, help="atlanacak ilk kare sayısı")
     p.add_argument("--kalibrasyon", type=int, default=100)
@@ -94,10 +98,11 @@ class Kamera:
         try:
             import aveo_sensor
             if self.a.mod == "manuel":
-                aveo_sensor.manuel_ayarla(self.a.cihaz, self.a.kazanc, self.a.pozlama)
+                aveo_sensor.manuel_ayarla(self.a.cihaz, self.a.kazanc, self.a.pozlama, self.a.ham)
                 self.sensor_manuel = True
                 pz = "değişmedi" if self.a.pozlama is None else f"0x{self.a.pozlama:x} satır"
-                log(f"Sensör MANUEL: AGC/AEC kapalı, kazanç=0x{self.a.kazanc:02x}, pozlama {pz}")
+                log(f"Sensör MANUEL: AGC/AEC kapalı, kazanç=0x{self.a.kazanc:02x}, pozlama {pz}"
+                    + (", HAM (DSP kapalı)" if self.a.ham else ""))
             else:
                 # Önceki bir çökme sensörü manuelde bırakmış olabilir: COM8=FF'yi açıkça uygula
                 aveo_sensor.oto_ayarla(self.a.cihaz)
@@ -116,6 +121,7 @@ class Kamera:
                 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))  # sıkıştırmasız
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_CONVERT_RGB, 0)   # ham YUYV: Y doğrudan, dönüşüm yok
                 if cap.isOpened() and cap.read()[0]:
                     self.cap = cap
                     return
@@ -127,14 +133,21 @@ class Kamera:
     def oku(self):
         """Gri kare (float32). Okuma başarısızsa kamerayı yeniden açar; None = yeniden açıldı."""
         ok, f = self.cap.read()
+        if ok and f.ndim == 3 and f.shape[2] == 2:
+            return f[:, :, 0].astype(np.float32)          # Y kanalı (siyah ~16-23, kırpılmaz)
         if ok:
-            return cv2.cvtColor(f, cv2.COLOR_BGR2GRAY).astype(np.float32)
+            log(f"UYARI: beklenmeyen kare biçimi {f.shape}")
         self.kopma += 1
         log("Kare okunamadı -> kamera yeniden açılıyor")
         self.kapat(sensoru_geri_al=False)
         time.sleep(2)
         self.ac()
         return None
+
+    def mod_adi(self):
+        if not self.sensor_manuel:
+            return "oto"
+        return "manuel-ham" if self.a.ham else "manuel"
 
     def kapat(self, sensoru_geri_al=True):
         # Sensörü akış sürerken otomatiğe döndür (PU değişikliği hemen uygulanır)
@@ -272,7 +285,7 @@ class Dedektor:
         x0, y0 = int(xs.min()), int(ys.min())
         w, h = int(xs.max()) - x0 + 1, int(ys.max()) - y0 + 1
         kaz = f"0x{self.a.kazanc:02x}" if self.kam.sensor_manuel else "oto"
-        mod = "manuel" if self.kam.sensor_manuel else "oto"
+        mod = self.kam.mod_adi()
         self.csv.writerow({"zaman": z, "kare": self.kare, "piksel": len(xs),
                            "tepe": round(tepe, 1), "toplam": round(toplam, 1),
                            "cx": round(cx, 1), "cy": round(cy, 1), "x0": x0, "y0": y0,
@@ -297,8 +310,7 @@ class Dedektor:
                             ham=g[y0:y1, x0:x1].astype(np.uint8), fark=dk.astype(np.float32),
                             sigma=np.sqrt(self.var[y0:y1, x0:x1]).astype(np.float32),
                             konum=np.array([x0, y0]), tepe=tepe, piksel=n,
-                            mod="manuel" if self.kam.sensor_manuel else "oto",
-                            kazanc=self.a.kazanc)
+                            mod=self.kam.mod_adi(), kazanc=self.a.kazanc)
         gorsel = np.clip(dk * (200.0 / max(tepe, 1.0)), 0, 255).astype(np.uint8)
         gorsel = cv2.resize(gorsel, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST)
         cv2.imwrite(f"{self.a.kayit}/olay_{z}.png", gorsel)
@@ -315,7 +327,7 @@ class Dedektor:
              "ref_ort": round(float(self.ref.mean()), 3),
              "sigma_medyan": round(float(np.median(np.sqrt(self.var))), 3),
              "maskeli": int(self.maske.sum()),
-             "mod": "manuel" if self.kam.sensor_manuel else "oto",
+             "mod": self.kam.mod_adi(),
              "kazanc": self.a.kazanc if self.kam.sensor_manuel else None}
         with open("durum.json.tmp", "w") as f:
             json.dump(d, f, indent=1)

@@ -1,8 +1,13 @@
 # Internal register space (vendor request `0x01`, wValue = 0)
 
 Read one byte: `ctrl_transfer(0xC2, 0x01, 0, address, 1)`.
-Some reads return 0 bytes; retry. Address **`0x007` never answers** (status / read-to-clear?).
-Space `0x000–0x1FF` holds data, `0x200–0x2FE` reads `0xFF`, `0x300+` reads `0x00`.
+Some reads return 0 bytes; retry. Address **`0x007` never answers**: it is the EP0 SETUP FIFO
+data port (see [firmware.md](firmware.md)).
+
+> **Update 24 Nov 2026:** `0x01` reads the **whole 64 KB XDATA space**, and the RAM firmware
+> sits at `0xA200–0xB3FF` and `0xC400–0xDEFF`. The full memory map is in [firmware.md](firmware.md).
+> `0x1B8–0x1BF` below is the SETUP packet buffer (`c2 01 00 00 bc 01 01 00` = our own read
+> request), not a setting.
 
 > The first dump was shifted by one byte after `0x007`; the addresses below are corrected.
 

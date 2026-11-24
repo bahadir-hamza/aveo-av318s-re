@@ -52,18 +52,44 @@ The module was salvaged with its original cable (USB + a 3.5 mm jack carrying an
 6. Bad-pixel correction, digital zoom and effects are done **in the Windows driver (software)**,
    not on the chip — so on Linux single bright pixels are *not* removed. Good news for particle
    detection.
+7. **Firmware dump without any write:** vendor `0x01` actually reads the whole 64 KB 8051
+   XDATA space. The RAM-resident firmware is there: two images, `OTP V001.00` (Jun 2010) and
+   `OTP V006.00` (Sep 2010). The USB vendor requests themselves are handled in mask ROM.
+   Vendor `0x09` only leaks old endpoint buffer data. See [docs/firmware.md](docs/firmware.md).
+   The dump itself is not published (Aveo copyright).
+8. **The image sensor is an OmniVision OV7725.** The UVC controls map to its DSP registers;
+   exposure / gain are never exposed. Through the gamma table in firmware RAM
+   (vendor `0x00` writes XDATA) **any OV7725 register can be written**. Manual gain is verified
+   (AGC off). See [docs/firmware.md](docs/firmware.md) and `tools/sensor_yaz.py`.
 
 > ⚠️ **Never send vendor requests `0x02` OUT, `0x03`, `0x07`, `0x08`** (persistent memory
-> writes) **or `0x10` / `0x11`** (the chip drops off the bus and hangs until physically
-> unplugged). All tools here are read-only, except `tools/reg_yaz_test.py`, which writes
-> volatile registers only (vendor `0x00`, range `0x100–0x1FF`).
+> writes) **or `0x10` / `0x11`** (suspected to make the chip drop off the bus until physically
+> unplugged — not confirmed, see docs). All tools here are read-only, except `tools/reg_yaz_test.py`, `tools/xdata_yaz_test.py`,
+> `tools/sensor_yaz.py` and `cosmic/aveo_sensor.py`, which write volatile XDATA RAM only
+> (vendor `0x00`).
 
 ## Cosmic ray detector
 
 With the sensor completely covered (aluminium foil + black tape, kept in the dark), any bright
 pixel cluster that appears in a single frame is a candidate particle hit (muons, gamma-induced
 electrons). [cosmic/kozmik.py](cosmic/kozmik.py) builds a dark reference frame, masks hot pixels
-and logs every event (PNG + CSV).
+and logs every event.
+
+v2 (24 Nov 2026):
+- per-pixel threshold `max(--esik, k·σ)`
+- slowly updated reference (EMA over event-free frames)
+- clusters split per frame, after-glow in the next frame ignored
+- light-leak detection
+- persistent hot-pixel mask (`maske.npy`)
+- automatic camera reconnect
+- signed-diff crops saved (`olay_*.npz` + PNG)
+- `olaylar_v2.csv` with header, `durum.json` status every minute
+- **Sensor mode** `--mod manuel --kazanc 0xff [--pozlama N]`: AGC/AEC off via
+  [cosmic/aveo_sensor.py](cosmic/aveo_sensor.py). Needs root for pyusb. Auto mode is restored on
+  exit.
+
+Note: in auto mode the OV7725 night mode (`COM5 = 0xD9`) halves the frame rate in the dark
+(15.9 fps). Manual mode runs at 30 fps.
 
 ### First night (22 → 23 Nov 2026, ~10.5 h, sea level, indoors)
 
@@ -89,9 +115,9 @@ Tips: use YUYV (never MJPEG — compression destroys small hits), raise `brightn
 ## Repository layout
 
 ```
-docs/      usb-descriptors.md, vendor-commands.md, register-map.md
+docs/      usb-descriptors.md, vendor-commands.md, register-map.md, firmware.md
 tools/     read-only probing scripts (pyusb / UVC XU ioctl)
-ghidra/    Ghidra scripts used to list call arguments in the Windows driver
+ghidra/    Ghidra scripts (Windows driver call arguments, 8051 firmware dump analysis)
 cosmic/    cosmic ray detector script + sample events
 ```
 

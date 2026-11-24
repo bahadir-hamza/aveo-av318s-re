@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Aveo AV318S - vendor 0x09 ile bellek dökümü denemesi (SALT OKUNUR)
+NOT (24 Kas 2026): 0x09 bellek dökümü DEĞİL, eski EP0 tamponunu döndürüyor -> bu script çıkmaz sokak.
 Komut taramasında 0x09 IN, 64 bayttan fazla veri döndürdü.
 Bu script YALNIZCA 0x09'u IN yönünde gönderir. (0x10/0x11 çipi kilitler - kullanma!)
 

@@ -13,3 +13,6 @@ cosmic/olaylar/olay_*.png
 
 __pycache__/
 .DS_Store
+# Firmware memory dumps (Aveo copyright) - keep local
+dumps/
+*.bin

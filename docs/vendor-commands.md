@@ -29,7 +29,7 @@ Recipient is *endpoint* (`bmRequestType` **`0xC2`** for IN, **`0x42`** for OUT);
 
 | bRequest | Dir | wValue | wIndex | Len | Meaning | Safety |
 |---|---|---|---|---|---|---|
-| `0x01` | IN | 0 | address | 1 / 8 | **Read internal register / memory byte(s)** | ✅ read-only |
+| `0x01` | IN | 0 | address | 1 | **Read one XDATA byte, full 0x0000–0xFFFF** (firmware dump!) | ✅ read-only |
 | `0x00` | OUT | value | address \| `0x100` | 0 | register write (generic, property cmd 2) | ⚠️ untested |
 | `0x60` | OUT | value | (sub << 8) \| addr | 0 | register write, probably sensor (property cmd 1) | ⚠️ untested |
 | `0x5e` | OUT | 0 | value | 0 | Low-light mode | ⚠️ untested |
@@ -78,7 +78,7 @@ The driver supports several Aveo chip generations; this AV318S answers only a su
 
 | bRequest | Dir | Result on this chip |
 |---|---|---|
-| `0x00` | OUT | ✅ **register write works**: wValue = value, wIndex = `0x100 \| addr`; read-back via `0x01` confirms |
+| `0x00` | OUT | ✅ **XDATA write works**: wValue = value, wIndex = full 16-bit address (registers *and* firmware RAM, see firmware.md); read-back via `0x01` confirms |
 | `0x01` | IN | ✅ register read |
 | `0x02` | IN | ✅ identification string (42 bytes, independent of wLength) |
 | `0x60` / `0x61` | OUT / IN | ❌ STALL for every wIndex high byte 0x00–0xFF (sensor access of another generation?) |
@@ -94,14 +94,38 @@ The driver supports several Aveo chip generations; this AV318S answers only a su
 | `0x01` | 1 byte (`f4`) |
 | `0x02` | 42 bytes (identification string) |
 | `0x04` | 1 byte (`99`) — unknown |
-| `0x09` | **more than 64 bytes** (overflow) — unknown, possibly a memory block → see `tools/bellek_dok.py` |
+| `0x09` | random length / overflow — **not a memory dump**, see "Vendor 0x09" below |
 | `0x0a` | 2 bytes (`00 00`) — unknown |
 | `0x10`, `0x11` | accepted, 0 bytes … |
 | `0x12`–`0x1b` | timeouts, then the device **dropped off the bus** |
 
-> ⛔ **`0x10` / `0x11` make the chip disconnect and hang.** It did not re-enumerate, and on a
-> Raspberry Pi 5 `uhubctl` could not recover it (the Pi 5 does not really cut VBUS, it only
-> disables the port). A physical unplug is needed. Never send them.
+> ⛔ **`0x10` / `0x11` — suspected dangerous.** Right after they were accepted the chip stopped
+> answering and dropped off the bus; `uhubctl` on a Raspberry Pi 5 could not recover it (the Pi 5
+> does not really cut VBUS, it only disables the port) and a physical unplug was needed.
+> However, someone may have moved the camera / its hand-soldered cable at about the same time,
+> so the cause is **not confirmed**. Treat them as dangerous until tested with physical access.
+
+### Vendor `0x09` IN — stale EP0 buffer, not a memory dump (24 Nov 2026)
+
+Tested read-only with `tools/test_09.py` (camera idle, `kozmik.py` not running).
+
+- Linux usbfs rejects control transfers with wLength > 4096 (`EINVAL`), so the planned
+  `0x10xx` wLength trick is impossible from user space.
+- The answer length is **not controlled by wLength**: the same request (wLength `0x0FFF`,
+  20 repeats) gave ~65 % Overflow, ~30 % 0 bytes, rarely 63 / 64 / 128 bytes. wLength `0x40`
+  also overflows most of the time. Earlier "low byte only" observations were this randomness.
+- The data is almost all zero. The only non-zero bytes are **copies of our own SETUP packets**:
+  `c2 09 00 00 00 00 ff 0f` at offsets 50, 58, 114 … and `c2 09 01 00 00 00 ff 0f` when
+  wValue = 1 (= bmRequestType, bRequest, wValue, wIndex, wLength).
+- wValue / wIndex do not select an address; they only show up inside the echoed SETUP bytes.
+- Right after a 0x09 burst one `0x02` read came back as 42 zero bytes; the next reads were
+  normal again (chip stays healthy, register reads OK).
+
+**Conclusion:** `0x09` is unimplemented; the firmware leaves EP0 sending whatever is in its
+setup / EP0 RAM buffer with no length check. It cannot be used to dump the firmware.
+`tools/bellek_dok.py` is therefore a dead end. The leaked bytes come from the endpoint
+buffers at XDATA `0x0400–0x07FF` (see [firmware.md](firmware.md)). The firmware itself *can* be
+dumped with `0x01`.
 
 ### Windows property page (`CamIntfc.ax`)
 

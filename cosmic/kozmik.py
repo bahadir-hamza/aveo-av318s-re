@@ -52,6 +52,8 @@ def argumanlar():
     p.add_argument("--esik", type=float, default=25.0, help="mutlak alt eşik (0-255)")
     p.add_argument("--k", type=float, default=8.0, help="sigma katsayısı")
     p.add_argument("--min-piksel", type=int, default=2)
+    p.add_argument("--kenar", type=int, default=2,
+                   help="maskelenecek sol/sağ kenar sütun sayısı (yüksek kazançta gürültülü)")
     p.add_argument("--isik-limit", type=int, default=2000,
                    help="bir karede bu kadar piksel aşarsa ışık sızıntısı say, olay değil")
     p.add_argument("--tekrar", type=int, default=3, help="aynı hücrede kaç olay = sıcak piksel")
@@ -191,6 +193,9 @@ class Dedektor:
         self.maske |= yeni_sicak
         for x, y in BILINEN_SICAK:
             self._maskele(x, y)
+        if self.a.kenar > 0:
+            self.maske[:, :self.a.kenar] = True
+            self.maske[:, -self.a.kenar:] = True
         self._esik_guncelle()
         self._maske_kaydet()
         log(f"Referans hazır: ort={self.ref.mean():.2f}, medyan sigma={np.median(sig):.2f}, "

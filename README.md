@@ -80,7 +80,8 @@ v2 (24 Nov 2026):
 - slowly updated reference (EMA over event-free frames)
 - clusters split per frame, after-glow in the next frame ignored
 - light-leak detection
-- persistent hot-pixel mask (`maske.npy`)
+- persistent hot-pixel mask (`maske.npy`); the 2 edge columns on each side are masked (noisy at
+  high gain)
 - automatic camera reconnect
 - signed-diff crops saved (`olay_*.npz` + PNG)
 - `olaylar_v2.csv` with header, `durum.json` status every minute

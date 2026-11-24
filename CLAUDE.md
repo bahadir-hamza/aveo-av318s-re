@@ -69,6 +69,8 @@ Firmware dump needs another route (e.g. reading the SPI flash / EEPROM chip dire
 - Cosmic: `kozmik.py` v2 deployed to the Pi on 24 Nov (old one = `kozmik_eski_20261124.py`, not running).
   Writes `olaylar_v2.csv`, `olaylar/*.npz` (signed diff), `durum.json`, `maske.npy`.
   `--mod manuel` (sudo) = AGC/AEC off, gain 0xFF, 30 fps (auto: night mode → 15.9 fps). Restores auto on exit.
+  Edge columns 0–1 / 638–639 are noisy at high gain → masked by default (`--kenar 2`).
+  Running since 24 Nov 19:16 in tmux `kozmik`: `sudo python3 kozmik.py --mod manuel --kazanc 0xff`.
   Open: no udev rule for 1871:0f01 yet (pyusb needs root); exposure value not verified (light test).
 - Docs in `docs/` and README must be updated with every finding; the user pushes to GitHub
   (`bahadir-hamza/aveo-av318s-re`) — ask before pushing.

@@ -95,6 +95,10 @@ interpolation, colour matrix, lens correction) are switched off. Neighbouring pi
 independent noise, so single-pixel hits are no longer erased or smeared. Details:
 [docs/firmware.md](docs/firmware.md).
 
+In raw mode the dark noise is heavy-tailed, so an event must be a cluster of ≥ 2 adjacent pixels
+(> 20) with a peak > 40, and pixels that flicker often are vetoed. The detector logs its own
+estimate of the random-coincidence rate.
+
 Note: in auto mode the OV7725 night mode (`COM5 = 0xD9`) halves the frame rate in the dark
 (15.9 fps). Manual mode runs at 30 fps.
 

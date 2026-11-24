@@ -12,10 +12,12 @@ Durdur:   Ctrl+C (ya da SIGTERM)
 Mantık:
   1) Isınma kareleri atlanır, KALIBRASYON karede piksel başına karanlık referans (medyan) ve
      gürültü (sigma) çıkarılır. Sıcak pikseller maskelenir (maske.npy'de saklanır).
-  2) Her karede işaretli fark = kare - referans. Eşik piksel başına max(--esik, --k * sigma).
-  3) Eşiği aşan pikseller kümelere ayrılır (8-komşuluk, 1 piksel boşluk birleştirilir);
-     --min-piksel üstü her küme bir olaydır. Önceki karede aynı yerdeki küme "devam" sayılır.
+  2) Her karede işaretli fark = kare - referans. İki eşik: alt (küme pikseli) ve tepe.
+  3) Alt eşiği aşan pikseller 8-komşulukla kümelenir; >= --min-piksel pikselli ve tepesi eşiği
+     aşan küme olaydır. Önceki karede aynı yerdeki küme "devam" sayılır.
   4) Aynı 4x4 hücrede --tekrar kez olay = sıcak piksel -> kalıcı maskeye eklenir.
+     Gürültü hızı: her pikselin alt eşiği kaç kez aştığı sayılır; dakikada --gurultu-hiz'dan sık
+     aşan (RTS / kalın kuyruklu) piksel içeren küme reddedilir. İlk --ogrenme saniye sadece sayılır.
   5) Olaysız kareler referansı ve sigma'yı yavaşça günceller (sıcaklık kayması).
   6) Kamera koparsa bekler, yeniden açar, sensör ayarlarını yeniden uygular.
 
@@ -52,15 +54,25 @@ def argumanlar():
                         "interpolasyon...) kapat -> piksel başına bağımsız ham veri")
     p.add_argument("--brightness", type=int, default=85)
     p.add_argument("--isinma", type=int, default=30, help="atlanacak ilk kare sayısı")
-    p.add_argument("--kalibrasyon", type=int, default=100)
-    p.add_argument("--esik", type=float, default=25.0, help="mutlak alt eşik (0-255)")
-    p.add_argument("--k", type=float, default=8.0, help="sigma katsayısı")
-    p.add_argument("--min-piksel", type=int, default=2)
+    p.add_argument("--kalibrasyon", type=int, default=300)
+    p.add_argument("--esik", type=float, default=40.0,
+                   help="küme tepe eşiği (mutlak, Y birimi); piksel başına max(bu, --k * sigma)")
+    p.add_argument("--k", type=float, default=8.0, help="tepe eşiği sigma katsayısı")
+    p.add_argument("--alt-esik", type=float, default=20.0,
+                   help="küme piksel eşiği (mutlak); piksel başına max(bu, --alt-k * sigma)")
+    p.add_argument("--alt-k", type=float, default=6.0)
+    p.add_argument("--min-piksel", type=int, default=2,
+                   help="kümede en az kaç komşu piksel (ham modda tek piksel gürültüden ayrılamaz)")
     p.add_argument("--kenar", type=int, default=2,
                    help="maskelenecek sol/sağ kenar sütun sayısı (yüksek kazançta gürültülü)")
     p.add_argument("--isik-limit", type=int, default=2000,
                    help="bir karede bu kadar piksel aşarsa ışık sızıntısı say, olay değil")
     p.add_argument("--tekrar", type=int, default=3, help="aynı hücrede kaç olay = sıcak piksel")
+    p.add_argument("--gurultu-hiz", type=float, default=3.0,
+                   help="alt eşiği dakikada bu kadardan sık aşan piksel 'gürültülü': içeren küme reddedilir")
+    p.add_argument("--gurultu-min", type=int, default=3, help="gürültülü sayılmak için en az aşım")
+    p.add_argument("--ogrenme", type=float, default=120,
+                   help="kalibrasyondan sonra kaç saniye sadece gürültü istatistiği toplansın")
     p.add_argument("--ema", type=float, default=1 / 1800, help="referans güncelleme hızı")
     p.add_argument("--kayit", default="olaylar")
     p.add_argument("--maske", default="maske.npy")
@@ -167,7 +179,11 @@ class Kamera:
 class Dedektor:
     def __init__(self, a, kam):
         self.a, self.kam = a, kam
-        self.ref = self.var = self.esik = None
+        self.ref = self.var = self.esik = self.alt_esik = None
+        self.sayim = None         # piksel başına alt eşik aşım sayısı (gürültü hızı)
+        self.kalib_zaman = time.time()
+        self.veto = self.ogrenme_atlanan = 0
+        self.rastlanti = 0.0      # beklenen rastlantısal küme sayısı (bağımsız gürültü varsayımı)
         self.maske = None
         self.tekrar = {}
         self.onceki = []          # önceki karedeki küme merkezleri
@@ -192,6 +208,7 @@ class Dedektor:
         k = np.stack(self._kareler(self.a.kalibrasyon))
         self.ref = np.median(k, axis=0)
         sig = k.std(axis=0)
+        del k
         self.var = np.maximum(sig, 0.5) ** 2
         yeni_sicak = (self.ref > self.ref.mean() + 5 * self.ref.std()) | \
                      (sig > 3 * np.median(sig) + 5)
@@ -209,13 +226,17 @@ class Dedektor:
         if self.a.kenar > 0:
             self.maske[:, :self.a.kenar] = True
             self.maske[:, -self.a.kenar:] = True
+        self.sayim = np.zeros(self.ref.shape, np.uint32)
+        self.kalib_zaman = time.time()
         self._esik_guncelle()
         self._maske_kaydet()
         log(f"Referans hazır: ort={self.ref.mean():.2f}, medyan sigma={np.median(sig):.2f}, "
-            f"maskeli piksel={int(self.maske.sum())}")
+            f"maskeli piksel={int(self.maske.sum())}; {self.a.ogrenme:.0f} sn gürültü öğrenme")
 
     def _esik_guncelle(self):
-        self.esik = np.maximum(self.a.esik, self.a.k * np.sqrt(self.var)).astype(np.float32)
+        sd = np.sqrt(self.var)
+        self.esik = np.maximum(self.a.esik, self.a.k * sd).astype(np.float32)
+        self.alt_esik = np.maximum(self.a.alt_esik, self.a.alt_k * sd).astype(np.float32)
 
     def _maskele(self, x, y, r=2):
         h, w = self.maske.shape
@@ -227,34 +248,55 @@ class Dedektor:
         os.replace(tmp, self.a.maske)
 
     # --- ana döngü ---
+    def gurultu_limiti(self):
+        dk = (time.time() - self.kalib_zaman) / 60
+        return max(self.a.gurultu_min, self.a.gurultu_hiz * dk)
+
     def isle(self, g):
+        """Olay = alt eşiği aşan >= --min-piksel komşu pikselden oluşan, tepesi eşiği aşan,
+        gürültülü piksel içermeyen küme (ölçüm: docs/firmware.md, 'Event selection')."""
         self.kare += 1
         fark = g - self.ref
         fark[self.maske] = 0
+        alt = fark > self.alt_esik
         parlak = fark > self.esik
-        n = int(parlak.sum())
+        n = int(np.count_nonzero(parlak))
+        if n:
+            # bağımsız gürültüde bir tepe pikselinin 8 komşusundan birinin alt eşiği aşma olasılığı
+            self.rastlanti += n * 8 * np.count_nonzero(alt) / alt.size
 
         if n > self.a.isik_limit:
             self.isik += 1
             if self.isik % 30 == 1:
                 log(f"UYARI: {n} piksel eşik üstü -> ışık sızıntısı? (bant/kapak kontrol et)")
             return
-        if n < self.a.min_piksel:
+        if n == 0:
+            np.add(self.sayim, alt, out=self.sayim, casting="unsafe")
             self._referans_guncelle(g, fark)
             self.onceki = []
             return
 
-        # 1 piksel boşlukları birleştirmek için genişletilmiş maskede etiketle
-        genis = cv2.dilate(parlak.astype(np.uint8), np.ones((3, 3), np.uint8))
-        adet, etiket = cv2.connectedComponents(genis, connectivity=8)
+        adet, etiket, stat, _ = cv2.connectedComponentsWithStats(alt.astype(np.uint8), connectivity=8)
+        tohum = np.unique(etiket[parlak])
+        limit = self.gurultu_limiti()
+        ogrenme = time.time() - self.kalib_zaman < self.a.ogrenme
         merkezler = []
-        for i in range(1, adet):
-            ys, xs = np.nonzero(parlak & (etiket == i))
-            if len(xs) < self.a.min_piksel:
+        for i in tohum[tohum > 0]:
+            if stat[i, cv2.CC_STAT_AREA] < self.a.min_piksel:
                 continue
-            w = fark[ys, xs]
-            cx, cy = float((xs * w).sum() / w.sum()), float((ys * w).sum() / w.sum())
+            x0, y0 = stat[i, cv2.CC_STAT_LEFT], stat[i, cv2.CC_STAT_TOP]
+            w, h = stat[i, cv2.CC_STAT_WIDTH], stat[i, cv2.CC_STAT_HEIGHT]
+            ys, xs = np.nonzero(etiket[y0:y0 + h, x0:x0 + w] == i)
+            ys, xs = ys + y0, xs + x0
+            wt = fark[ys, xs]
+            cx, cy = float((xs * wt).sum() / wt.sum()), float((ys * wt).sum() / wt.sum())
             merkezler.append((cx, cy))
+            if self.sayim[ys, xs].max() >= limit:     # sık sıçrayan (RTS) piksel içeriyor
+                self.veto += 1
+                continue
+            if ogrenme:
+                self.ogrenme_atlanan += 1
+                continue
             if any(abs(cx - px) < 4 and abs(cy - py) < 4 for px, py in self.onceki):
                 self.devam += 1          # önceki karedeki izin devamı (afterglow)
                 continue
@@ -267,6 +309,7 @@ class Dedektor:
                 log(f"  -> ({int(cx)},{int(cy)}) tekrar ediyor, sıcak piksel olarak maskelendi")
                 continue
             self._olay(g, fark, xs, ys, cx, cy)
+        np.add(self.sayim, alt, out=self.sayim, casting="unsafe")
         self.onceki = merkezler
 
     def _referans_guncelle(self, g, fark):
@@ -325,8 +368,11 @@ class Dedektor:
              "olay_dk": round(self.sayac / max(self.canli_sure() / 60, 1e-9), 3),
              "devam_kumesi": self.devam, "isik_karesi": self.isik, "kopma": self.kam.kopma,
              "ref_ort": round(float(self.ref.mean()), 3),
-             "sigma_medyan": round(float(np.median(np.sqrt(self.var))), 3),
-             "maskeli": int(self.maske.sum()),
+             "sigma_medyan": round(float(np.median(np.sqrt(self.var[~self.maske]))), 3),
+             "maskeli": int(self.maske.sum()), "veto": self.veto,
+             "gurultulu_piksel": int(np.count_nonzero(self.sayim >= self.gurultu_limiti())),
+             "ogrenme_atlanan": self.ogrenme_atlanan,
+             "rastlanti_dk_ust_sinir": round(self.rastlanti / max(self.canli_sure() / 60, 1e-9), 3),
              "mod": self.kam.mod_adi(),
              "kazanc": self.a.kazanc if self.kam.sensor_manuel else None}
         with open("durum.json.tmp", "w") as f:
@@ -366,7 +412,8 @@ def main():
                 fps = (det.kare - son_kare) / (time.time() - son_durum)
                 d = det.durum_yaz(fps)
                 log(f"... {d['canli_dk']:.1f} dk, {det.kare} kare, {fps:.1f} fps, "
-                    f"{det.sayac} olay ({d['olay_dk']}/dk), ref={d['ref_ort']}, "
+                    f"{det.sayac} olay ({d['olay_dk']}/dk, rastlantı<={d['rastlanti_dk_ust_sinir']}/dk), "
+                    f"veto={d['veto']}, ref={d['ref_ort']}, "
                     f"sigma={d['sigma_medyan']}, mod={d['mod']}")
                 son_durum, son_kare = time.time(), det.kare
     except KeyboardInterrupt:

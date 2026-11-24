@@ -200,8 +200,33 @@ and opening the stream with the original slot fully restores the sensor.
 (1920 = edge columns, ~670 hot pixels formerly hidden by WPC), 1.5 events/min (all 2 px,
 peak 26–33, close to the threshold).
 
+## Event selection in raw mode (24 Nov 2026)
+
+With WPC/denoise off and gain 0xFF the dark noise is **heavy-tailed**: σ≈2.1, but 1.3 % of the
+pixels are > +10 in every frame. Within 3 min, 290 k different pixels exceeded +15 and 77
+different pixels exceeded +40 exactly once. Single-pixel / threshold rules can't separate hits
+from noise, and masking "noisy" pixels fails because nearly all pixels are occasionally noisy
+(a max-deviation mask hid 76 % of the sensor). Data: `tools/seyrek_kayit.py` (stores every
+pixel > +10 per frame), `tools/seyrek_analiz.py`.
+
+Pixel noise is independent (correlation 0.00), so **adjacent-pixel pairs are random
+coincidences**. Measured pair rates match `N(>T1)/frame × 8 × P(>T2)` (e.g. T>15: 2500/min
+measured vs 2470 expected, the same in every direction, no readout artefact). Rule used by
+`kozmik.py` since 24 Nov 20:25:
+
+- event = ≥ 2 8-connected pixels > T2 = `max(20, 6σ)` with peak > T1 = `max(40, 8σ)`
+- veto: the cluster contains a pixel that exceeded T2 more than 3×/min so far (RTS); the first
+  120 s only collect these statistics
+- expected accidental rate (no veto) ≈ 0.7–0.9 /min; with the veto almost all of it goes away.
+  `durum.json: rastlanti_dk_ust_sinir` is the running upper bound (vetoed pixels included).
+
+Earlier thresholds (T1 = 25–30) gave 1–1.5 events/min of pure coincidences. Expected physics
+rate for 0.12 cm²: muons ≈ 0.1/min plus some γ/β background. First 6 min with the new rule:
+0 events.
+
 ## Next steps
 
+- Calibrate with a known weak source (KCl "light salt" next to the sensor): rate must rise.
 - Light test (user at home): verify exposure `0x08/0x10`, find the max useful exposure
   (frame length, dummy lines `0x2D/0x2E`, clock `0x11`).
 - Cosmic detector: run with manual max gain + max exposure (`13=fa 00=ff …`) instead of auto

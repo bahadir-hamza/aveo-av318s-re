@@ -70,9 +70,11 @@ Firmware dump needs another route (e.g. reading the SPI flash / EEPROM chip dire
   Writes `olaylar_v2.csv`, `olaylar/*.npz` (signed diff), `durum.json`, `maske.npy`.
   `--mod manuel` (sudo) = AGC/AEC off, gain 0xFF, 30 fps (auto: night mode → 15.9 fps). Restores auto on exit.
   Edge columns 0–1 / 638–639 are noisy at high gain → masked by default (`--kenar 2`).
-  Running since 24 Nov 19:50 in tmux `kozmik`: `sudo python3 kozmik.py --mod manuel --kazanc 0xff`
+  Running since 24 Nov 20:25 in tmux `kozmik`: `sudo python3 kozmik.py --mod manuel --kazanc 0xff`
   (= raw mode `--ham`: Y read directly, OV7725 denoise/WPC/BPC/gamma/interpolation/CMX/lens off,
   pixels independent; see docs/firmware.md "Raw pixel data"). Sensor re-inits on every stream start.
+  Since 20:25: event = ≥2 adjacent px >20 with peak >40 + RTS rate veto (docs/firmware.md "Event selection").
+  Raw-mode noise is heavy-tailed: never go back to single-pixel / low-threshold rules (1–1.5/min = coincidences).
   Open: no udev rule for 1871:0f01 yet (pyusb needs root); exposure value not verified (light test).
 - Docs in `docs/` and README must be updated with every finding; the user pushes to GitHub
   (`bahadir-hamza/aveo-av318s-re`) — ask before pushing.

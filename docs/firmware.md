@@ -224,8 +224,29 @@ Earlier thresholds (T1 = 25–30) gave 1–1.5 events/min of pure coincidences. 
 rate for 0.12 cm²: muons ≈ 0.1/min plus some γ/β background. First 6 min with the new rule:
 0 events.
 
+### First night with this rule (24 → 25 Nov, 20:25–07:45, 11.3 h)
+
+Stable: 30 fps, 1.22 M frames, 0 disconnects, 0 light-leak frames, Pi at 52 °C.
+**11 events** (≈1/h), 645 clusters vetoed (noisy pixels, 593 flagged).
+
+| Time | Peak | Neighbour | Note |
+|---|---|---|---|
+| 21:20, 22:35, 01:33, 04:03, 05:58 | 40–44 | 21–27 | 2 px |
+| 06:32:50 + 06:33:03 | 70 / 62 | 22 / 20 | **same pixel (307,42) 13 s apart → suspicious** |
+| 06:35, 07:09, 07:43 | 40–57 | 20–28 | 2 px |
+| **07:19** | **232** | **123** | clearest candidate |
+
+Is a 2-pixel event noise? Check on the 3-min sparse recording: isolated noise spikes on quiet
+pixels are truly single-pixel. Of 442 spikes > 30, **none** had a neighbour > 20, and only
+~1 % had a neighbour > 10, the same in every direction (no readout echo). Every night event
+has a neighbour > 20, so they are statistically separated from noise and look like charge
+sharing. The rate (~1/h) is below the rough muon estimate (~6/h): with a peak threshold of 40
+many deposits are probably missed. Since noise spikes > 30 never had a > 20 neighbour, T1 can
+likely be lowered to 30.
+
 ## Next steps
 
+- Try T1 = 30 (`--esik 30`) for one night and compare the rate.
 - Calibrate with a known weak source (KCl "light salt" next to the sensor): rate must rise.
 - Light test (user at home): verify exposure `0x08/0x10`, find the max useful exposure
   (frame length, dummy lines `0x2D/0x2E`, clock `0x11`).

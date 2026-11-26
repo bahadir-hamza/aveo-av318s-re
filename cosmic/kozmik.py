@@ -15,7 +15,9 @@ Mantık:
   2) Her karede işaretli fark = kare - referans. İki eşik: alt (küme pikseli) ve tepe.
   3) Alt eşiği aşan pikseller 8-komşulukla kümelenir; >= --min-piksel pikselli ve tepesi eşiği
      aşan küme olaydır. Önceki karede aynı yerdeki küme "devam" sayılır.
-  4) Aynı 4x4 hücrede --tekrar kez olay = sıcak piksel -> kalıcı maskeye eklenir.
+  4) Geçmiş olayların (olaylar_v2.csv, yeniden başlatmalarda da) --tekrar-r piksel yakınında
+     yeni olay = kusurlu piksel: satır 'tekrar' sütunuyla işaretlenir; o noktada toplam olay
+     --tekrar'a ulaşınca kalıcı maskeye eklenir. (Eski 4x4 hücre sınırı aynı pikseli bölebiliyordu.)
      Gürültü hızı: her pikselin alt eşiği kaç kez aştığı sayılır; dakikada --gurultu-hiz'dan sık
      aşan (RTS / kalın kuyruklu) piksel içeren küme reddedilir. İlk --ogrenme saniye sadece sayılır.
   5) Olaysız kareler referansı ve sigma'yı yavaşça günceller (sıcaklık kayması).
@@ -38,7 +40,8 @@ BY_ID = "/dev/v4l/by-id/usb-AVEO_Technology_Corp._USB2.0_Camera-video-index0"
 BILINEN_SICAK = [(639, 322), (0, 465)]   # (x, y) bilinen titreyen pikseller
 KIRP = 24                                # olay çevresinde kırpma yarıçapı (piksel)
 CSV_ALANLAR = ["zaman", "kare", "piksel", "tepe", "toplam", "cx", "cy",
-               "x0", "y0", "w", "h", "mod", "kazanc"]
+               "x0", "y0", "w", "h", "mod", "kazanc", "tekrar"]
+CSV_YOL = "olaylar_v2.csv"
 
 
 def argumanlar():
@@ -67,7 +70,9 @@ def argumanlar():
                    help="maskelenecek sol/sağ kenar sütun sayısı (yüksek kazançta gürültülü)")
     p.add_argument("--isik-limit", type=int, default=2000,
                    help="bir karede bu kadar piksel aşarsa ışık sızıntısı say, olay değil")
-    p.add_argument("--tekrar", type=int, default=3, help="aynı hücrede kaç olay = sıcak piksel")
+    p.add_argument("--tekrar", type=int, default=2,
+                   help="aynı noktada (--tekrar-r içinde) kaç olay = kusurlu piksel -> maskele")
+    p.add_argument("--tekrar-r", type=float, default=3.0, help="tekrar yarıçapı (piksel)")
     p.add_argument("--gurultu-hiz", type=float, default=3.0,
                    help="alt eşiği dakikada bu kadardan sık aşan piksel 'gürültülü': içeren küme reddedilir")
     p.add_argument("--gurultu-min", type=int, default=3, help="gürültülü sayılmak için en az aşım")
@@ -185,7 +190,7 @@ class Dedektor:
         self.veto = self.ogrenme_atlanan = 0
         self.rastlanti = 0.0      # beklenen rastlantısal küme sayısı (bağımsız gürültü varsayımı)
         self.maske = None
-        self.tekrar = {}
+        self.gecmis = []          # (cx, cy) tüm geçmiş olaylar (CSV'den + bu çalışma)
         self.onceki = []          # önceki karedeki küme merkezleri
         self.sayac = self.kare = self.isik = self.devam = 0
         self.saat_kayit, self.saat_bas = 0, time.time()
@@ -221,6 +226,8 @@ class Dedektor:
             except Exception as e:
                 log(f"UYARI: {self.a.maske} okunamadı: {e}")
         self.maske |= yeni_sicak
+        for x, y in self.tekrar_noktalari():
+            self._maskele(int(round(x)), int(round(y)))
         for x, y in BILINEN_SICAK:
             self._maskele(x, y)
         if self.a.kenar > 0:
@@ -300,17 +307,23 @@ class Dedektor:
             if any(abs(cx - px) < 4 and abs(cy - py) < 4 for px, py in self.onceki):
                 self.devam += 1          # önceki karedeki izin devamı (afterglow)
                 continue
-            hucre = (int(cx) // 4, int(cy) // 4)
-            self.tekrar[hucre] = self.tekrar.get(hucre, 0) + 1
-            if self.tekrar[hucre] >= self.a.tekrar:
-                self._maskele(int(cx), int(cy))
-                self._esik_guncelle()
+            onceki_olay = self.yakindaki(cx, cy)
+            self._olay(g, fark, xs, ys, cx, cy, len(onceki_olay))
+            if len(onceki_olay) + 1 >= self.a.tekrar:
+                for px, py in onceki_olay + [(cx, cy)]:
+                    self._maskele(int(round(px)), int(round(py)))
                 self._maske_kaydet()
-                log(f"  -> ({int(cx)},{int(cy)}) tekrar ediyor, sıcak piksel olarak maskelendi")
-                continue
-            self._olay(g, fark, xs, ys, cx, cy)
+                log(f"  -> ({cx:.0f},{cy:.0f}) {len(onceki_olay) + 1}. kez: kusurlu piksel, maskelendi")
         np.add(self.sayim, alt, out=self.sayim, casting="unsafe")
         self.onceki = merkezler
+
+    def yakindaki(self, cx, cy):
+        r = self.a.tekrar_r
+        return [(x, y) for x, y in self.gecmis if abs(x - cx) <= r and abs(y - cy) <= r]
+
+    def tekrar_noktalari(self):
+        """Geçmişte >= --tekrar olay görülen noktalar (her olay kendi yakınını sayar)."""
+        return [(x, y) for x, y in self.gecmis if len(self.yakindaki(x, y)) >= self.a.tekrar]
 
     def _referans_guncelle(self, g, fark):
         a = self.a.ema
@@ -320,7 +333,7 @@ class Dedektor:
         if self.kare % 300 == 0:
             self._esik_guncelle()
 
-    def _olay(self, g, fark, xs, ys, cx, cy):
+    def _olay(self, g, fark, xs, ys, cx, cy, tekrar=0):
         self.sayac += 1
         z = zaman_damgasi()
         tepe = float(fark[ys, xs].max())
@@ -332,12 +345,14 @@ class Dedektor:
         self.csv.writerow({"zaman": z, "kare": self.kare, "piksel": len(xs),
                            "tepe": round(tepe, 1), "toplam": round(toplam, 1),
                            "cx": round(cx, 1), "cy": round(cy, 1), "x0": x0, "y0": y0,
-                           "w": w, "h": h, "mod": mod, "kazanc": kaz})
+                           "w": w, "h": h, "mod": mod, "kazanc": kaz, "tekrar": tekrar})
         self.csv_dosya.flush()
+        self.gecmis.append((cx, cy))
         self._kaydet(z, g, fark, int(cx), int(cy), tepe, len(xs))
         dk = self.canli_sure() / 60
         log(f"OLAY #{self.sayac}: {len(xs)} piksel, tepe={tepe:.0f}, toplam={toplam:.0f}, "
-            f"konum=({cx:.0f},{cy:.0f}) {w}x{h} | {self.sayac / max(dk, 1e-9):.2f}/dk")
+            f"konum=({cx:.0f},{cy:.0f}) {w}x{h}" + (f" [TEKRAR x{tekrar}]" if tekrar else "") +
+            f" | {self.sayac / max(dk, 1e-9):.2f}/dk")
 
     def _kaydet(self, z, g, fark, cx, cy, tepe, n):
         if time.time() - self.saat_bas > 3600:
@@ -381,6 +396,31 @@ class Dedektor:
         return d
 
 
+def csv_hazirla(r):
+    """Eski CSV'yi okur, geçmiş olay konumlarını döndürür. 'tekrar' sütunu yoksa (eski sürüm)
+    dosyayı sütun geriye dönük hesaplanmış olarak yeniden yazar (yedek: .bak)."""
+    if not os.path.exists(CSV_YOL):
+        return []
+    with open(CSV_YOL, newline="") as f:
+        okuyucu = csv.DictReader(f)
+        satirlar, alanlar = list(okuyucu), okuyucu.fieldnames or []
+    gecmis = []
+    for s in satirlar:
+        cx, cy = float(s["cx"]), float(s["cy"])
+        if "tekrar" not in alanlar:
+            s["tekrar"] = sum(abs(x - cx) <= r and abs(y - cy) <= r for x, y in gecmis)
+        gecmis.append((cx, cy))
+    if alanlar and "tekrar" not in alanlar:
+        os.replace(CSV_YOL, CSV_YOL + ".bak")
+        with open(CSV_YOL, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=CSV_ALANLAR, extrasaction="ignore")
+            w.writeheader()
+            w.writerows(satirlar)
+        log(f"{CSV_YOL}: 'tekrar' sütunu eklendi (eski dosya {CSV_YOL}.bak)")
+    log(f"Geçmiş: {len(gecmis)} olay okundu")
+    return gecmis
+
+
 def main():
     a = argumanlar()
     os.makedirs(a.kayit, exist_ok=True)
@@ -392,10 +432,10 @@ def main():
     kam = Kamera(a)
     kam.ac()
     det = Dedektor(a, kam)
-    yeni = not os.path.exists("olaylar_v2.csv")
-    det.csv_dosya = open("olaylar_v2.csv", "a", newline="")
+    det.gecmis = csv_hazirla(a.tekrar_r)
+    det.csv_dosya = open(CSV_YOL, "a", newline="")
     det.csv = csv.DictWriter(det.csv_dosya, fieldnames=CSV_ALANLAR)
-    if yeni:
+    if not det.gecmis and os.path.getsize(CSV_YOL) == 0:
         det.csv.writeheader()
     try:
         det.kalibre_et()

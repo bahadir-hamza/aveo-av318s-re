@@ -244,9 +244,31 @@ sharing. The rate (~1/h) is below the rough muon estimate (~6/h): with a peak th
 many deposits are probably missed. Since noise spikes > 30 never had a > 20 neighbour, T1 can
 likely be lowered to 30.
 
+### 45 h run (24 Nov 20:25 → 26 Nov 17:53): repeating pixels
+
+Stable: 30 fps, 4.9 M frames, 0 disconnects, 0 light-leak frames. **44 events**, 2185 vetoed.
+But **19 of the 44 events sit on just 9 spots** (within ±3 px). For 44 random hits about 0.15
+such pairs would be expected, so these are **defect pixels that fire rarely** (minutes to hours
+apart, too slow for the rate veto). Examples: (316,360) at 01:25, 04:45, 13:02; (361,421) peak
+161 twice 12 s apart; (146,434) 1 s apart. The old repeat mask (3 events in the same 4×4 cell)
+never fired, because one pixel's events fell on both sides of a cell border (y = 359 / 360).
+
+Without the repeating spots: **25 single events in 45.4 h ≈ 0.55/h**. Best ones: 25 Nov 07:19
+(peak 232, neighbour 123) and 25 Nov 13:37 (peak 232, x = 631 near the edge). 26 Nov
+14:00–17:30 had more events (13 in 3.5 h, half of them repeats); the singles rose to ~1.7/h,
+possibly temperature (not checked).
+
+Fix (`kozmik.py`, from 26 Nov 17:53): the history of all events is read from `olaylar_v2.csv`
+at start (survives restarts). A new event within `--tekrar-r 3` px of an earlier one is still
+written, with column `tekrar` = number of earlier events nearby; once a spot reaches `--tekrar 2`
+events it goes into the persistent mask. Old rows got the column retroactively (backup
+`olaylar_v2.csv.bak`). For analysis, count only spots that ever had a single event:
+the *first* event of a later-repeating spot has `tekrar = 0`.
+
 ## Next steps
 
-- Try T1 = 30 (`--esik 30`) for one night and compare the rate.
+- Try T1 = 30 (`--esik 30`) for one night and compare the rate (after the repeat fix has
+  run a while, defect pixels would dominate a lower threshold).
 - Calibrate with a known weak source (KCl "light salt" next to the sensor): rate must rise.
 - Light test (user at home): verify exposure `0x08/0x10`, find the max useful exposure
   (frame length, dummy lines `0x2D/0x2E`, clock `0x11`).

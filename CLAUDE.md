@@ -75,6 +75,8 @@ Firmware dump needs another route (e.g. reading the SPI flash / EEPROM chip dire
   pixels independent; see docs/firmware.md "Raw pixel data"). Sensor re-inits on every stream start.
   Since 20:25: event = ≥2 adjacent px >20 with peak >40 + RTS rate veto (docs/firmware.md "Event selection").
   Raw-mode noise is heavy-tailed: never go back to single-pixel / low-threshold rules (1–1.5/min = coincidences).
+  26 Nov 17:53: repeat mask now radius-based (±3 px, mask at 2nd event, history from CSV, column
+  `tekrar`); 45 h run: 19/44 events were 9 defect spots, 25 singles ≈ 0.55/h.
   Open: no udev rule for 1871:0f01 yet (pyusb needs root); exposure value not verified (light test).
 - Docs in `docs/` and README must be updated with every finding; the user pushes to GitHub
   (`bahadir-hamza/aveo-av318s-re`) — ask before pushing.
